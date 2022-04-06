@@ -1,0 +1,16 @@
+[package]
+name = "batterypilot"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+xshell = "0.1.8"
+battery = "0.7.8"
+libc = "0.2.121"
+futures = "0.3.21"
+tokio = { version = "1.17.0", features = ["full"] }
+regex = "1.5"
+log = { version = "0.4.16" }
+env_logger = "0.9.0"
