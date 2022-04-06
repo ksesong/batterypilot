@@ -9,6 +9,7 @@ extern crate tokio;
 use std::env;
 use std::error::Error;
 use std::ffi::CString;
+use std::fs;
 use std::io::Read;
 use std::mem::MaybeUninit;
 use std::os::raw::{c_char, c_int, c_void};
@@ -214,9 +215,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let smc_path = match env::var("SMC_PATH") {
         Ok(val) => PathBuf::from(val),
-        Err(_e) => env::current_exe().unwrap().parent().unwrap().join("smc"),
+        Err(_e) => {
+            let sibling_path = env::current_exe().unwrap().parent().unwrap().join("smc");
+            match fs::metadata(&sibling_path).is_ok() {
+                true => sibling_path,
+                false => PathBuf::from(
+                    option_env!("SMC_PATH").expect("set SMC_PATH environment variable"),
+                ),
+            }
+        }
     };
-
     let manager = battery::Manager::new()?;
     let mut battery = manager.batteries()?.next().ok_or("no battery found")??;
 
