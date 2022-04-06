@@ -1,0 +1,94 @@
+name: release
+
+on:
+  push:
+    branches:
+      - main
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  extract-version:
+    name: extract-version
+    runs-on: ubuntu-latest
+    outputs:
+      last_tagged_version: ${{ steps.tag.outputs.version }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Extract version
+        id: "version"
+        run: |
+          echo "::set-output name=version::$(cat Cargo.toml | grep version | head -1 | awk -F '"' '{ print $2 }')"
+      - name: Extract last tagged version
+        id: "tag"
+        run: |
+          echo "::set-output name=version::$(git tag | grep -E '^v[0-9]' | sort -V | tail -1 | cut -b 2-7)"
+  create-release:
+    name: create-release
+    needs: ["extract-version"]
+    runs-on: ubuntu-latest
+    if: ${{ needs.extract-version.outputs.version != needs.extract-version.last_tagged_version }}
+    outputs:
+      sha256: ${{ steps.hash.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Create release
+        run: |
+          gh release create v${{ needs.extract-version.outputs.version }} \
+            -t v${{ needs.extract-version.outputs.version }} \
+            --target $(git rev-list --max-count=1 HEAD) \
+            --generate-notes
+        continue-on-error: true
+      - name: Extract archive hash
+        id: "hash"
+        run: |
+          gh release download v${{ needs.extract-version.outputs.version }} --archive=tar.gz
+          echo "::set-output name=sha256::$(shasum -a 256 batterypilot-${{ needs.extract-version.outputs.version }}.tar.gz | cut -d " " -f 1)"
+  commit-batterypilot-homebrew-formula:
+    name: commit-batterypilot-homebrew-formula
+    needs: ["extract-version", "create-release"]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          repository: ksesong/homebrew-batterypilot
+          token: ${{ secrets.REPOSITORY_ACCESS_TOKEN }}
+      - run: |
+          tee batterypilot.rb << END
+          class Batterypilot < Formula
+            desc "Script that enables/disables MacBook's battery charging around a target value."
+            homepage "https://github.com/ksesong/batterypilot"
+            url "https://github.com/ksesong/batterypilot/archive/refs/tags/v${{ needs.extract-version.outputs.version }}.tar.gz"
+            sha256 "${{ needs.create-release.outputs.sha256 }}"
+
+            depends_on "rust" => :build
+
+            def install
+              system "cargo", "build", "--release", "--bin", "batterypilot"
+              libexec.install "target/release/smc"
+              bin.install "target/release/batterypilot"
+            end
+
+            service do
+              run opt_bin/"batterypilot"
+              environment_variables SMC_PATH: opt_libexec/"smc"
+            end
+
+            test do
+              assert_equal "is_charging_enabled: true", shell_output("#{bin}/batterypilot --read").strip
+            end
+          end
+          END
+          git add .
+          git config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions"
+          git commit -m "chore: update brew formula (${{ needs.extract-version.outputs.version }})" -a
+        continue-on-error: true
+      - uses: ad-m/github-push-action@master
+        with:
+          repository: ksesong/homebrew-batterypilot
+          github_token: ${{ secrets.REPOSITORY_ACCESS_TOKEN }}
+          branch: main
+        continue-on-error: true
