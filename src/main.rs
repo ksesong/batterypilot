@@ -179,7 +179,19 @@ impl AsyncRead for AsyncNotifyFd {
     }
 }
 
-fn is_charging_enabled(smc_path: &Path) -> bool {
+fn get_is_temperature_safe_for_charge(
+    battery: &battery::Battery,
+    temperature_high_limit: f32,
+) -> bool {
+    battery
+        .temperature()
+        .ok_or(0)
+        .unwrap()
+        .get::<degree_celsius>()
+        < temperature_high_limit
+}
+
+fn get_is_charging_enabled(smc_path: &Path) -> bool {
     let key_read_output = Command::new(&smc_path)
         .args(["-k", "CH0B", "-r"])
         .output()
@@ -228,25 +240,30 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let manager = battery::Manager::new()?;
     let mut battery = manager.batteries()?.next().ok_or("no battery found")??;
 
-    let mut power_nfd = AsyncNotifyFd::new("com.apple.system.powersources.timeremaining")?;
-    let mut power_buf = [0; 4];
-    let mut sleep_nfd = AsyncNotifyFd::new("com.apple.powermanagement.systempowerstate")?;
-    let mut sleep_buf = [0; 4];
-
     let stage_of_charge_low_limit: f32 = 44.0;
     let stage_of_charge_high_limit: f32 = 56.0;
     let temperature_high_limit: f32 = 32.0;
 
-    let mut is_charging_enabled: bool = is_charging_enabled(&smc_path);
+    let mut is_charging_enabled: bool = get_is_charging_enabled(&smc_path);
     debug!("is_charging_enabled: {:?}", is_charging_enabled);
 
-    let mut sigint = signal(SignalKind::interrupt()).unwrap();
-    let mut sigterm = signal(SignalKind::terminate()).unwrap();
-
     if std::env::args().nth(1).unwrap_or_default() == "--read" {
-        println!("is_charging_enabled: {:?}", is_charging_enabled);
+        println!(
+            "is_charging_enabled: {:?}; is_temperature_safe_for_charge: {:?}",
+            is_charging_enabled,
+            get_is_temperature_safe_for_charge(&battery, temperature_high_limit)
+        );
         return Ok(());
     }
+
+    let mut was_charging_enabled_at_sleep: bool = false;
+
+    let mut power_nfd = AsyncNotifyFd::new("com.apple.system.powersources.timeremaining")?;
+    let mut power_buf = [0; 4];
+    let mut sleep_nfd = AsyncNotifyFd::new("com.apple.powermanagement.systempowerstate")?;
+    let mut sleep_buf = [0; 4];
+    let mut sigint = signal(SignalKind::interrupt()).unwrap();
+    let mut sigterm = signal(SignalKind::terminate()).unwrap();
 
     loop {
         tokio::select! {
@@ -261,15 +278,21 @@ async fn main() -> Result<(), Box<dyn Error>> {
             _ = sleep_nfd.read_exact(&mut sleep_buf) => {
                 if is_charging_enabled {
                     is_charging_enabled = enable_charging(&smc_path, false);
+                    was_charging_enabled_at_sleep = true;
+                } else if was_charging_enabled_at_sleep {
+                    if get_is_temperature_safe_for_charge(&battery, temperature_high_limit)
+                        && battery.state_of_charge().get::<percent>() < stage_of_charge_high_limit {
+                        is_charging_enabled = enable_charging(&smc_path, true);
+                        debug!("enabled charging at wake, continue from before sleep");
+                    }
+                    was_charging_enabled_at_sleep = false;
                 }
             },
             _ = power_nfd.read_exact(&mut power_buf) => {
-                let is_temperature_safe_for_charge: bool = battery
-                    .temperature()
-                    .ok_or(0)
-                    .unwrap()
-                    .get::<degree_celsius>()
-                    < temperature_high_limit;
+                let is_temperature_safe_for_charge = get_is_temperature_safe_for_charge(
+                    &battery,
+                    temperature_high_limit
+                );
 
                 if !is_charging_enabled
                     && is_temperature_safe_for_charge
