@@ -240,8 +240,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let manager = battery::Manager::new()?;
     let mut battery = manager.batteries()?.next().ok_or("no battery found")??;
 
-    let stage_of_charge_low_limit: f32 = 44.0;
-    let stage_of_charge_high_limit: f32 = 56.0;
+    let stage_of_charge_low_limit: f32 = 48.0;
+    let stage_of_charge_high_limit: f32 = 52.0;
     let temperature_high_limit: f32 = 32.0;
 
     let mut is_charging_enabled: bool = get_is_charging_enabled(&smc_path);
