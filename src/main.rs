@@ -279,13 +279,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 if is_charging_enabled {
                     is_charging_enabled = enable_charging(&smc_path, false);
                     was_charging_enabled_at_sleep = true;
-                } else if was_charging_enabled_at_sleep {
-                    if get_is_temperature_safe_for_charge(&battery, temperature_high_limit)
-                        && battery.state_of_charge().get::<percent>() < stage_of_charge_high_limit {
-                        is_charging_enabled = enable_charging(&smc_path, true);
-                        debug!("enabled charging at wake, continue from before sleep");
-                    }
-                    was_charging_enabled_at_sleep = false;
                 }
             },
             _ = power_nfd.read_exact(&mut power_buf) => {
@@ -294,7 +287,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     temperature_high_limit
                 );
 
-                if !is_charging_enabled
+                if was_charging_enabled_at_sleep {
+                    if is_temperature_safe_for_charge
+                        && battery.state_of_charge().get::<percent>() < stage_of_charge_high_limit {
+                        is_charging_enabled = enable_charging(&smc_path, true);
+                        debug!("continue charging, interrupted at sleep");
+                    }
+                    was_charging_enabled_at_sleep = false;
+                } else if !is_charging_enabled
                     && is_temperature_safe_for_charge
                     && battery.state_of_charge().get::<percent>() <= stage_of_charge_low_limit
                 {
@@ -318,7 +318,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 if v == power_nfd.token {
                     manager.refresh(&mut battery)?;
                 } else {
-                    return Err("Unknown token in file descriptor!".into());
+                    return Err("unknown token in file descriptor!".into());
                 }
             }
         }
