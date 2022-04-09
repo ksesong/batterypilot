@@ -47,7 +47,7 @@ dependencies = [
 
 [[package]]
 name = "batterypilot"
-version = "0.2.3"
+version = "0.3.0"
 dependencies = [
  "battery",
  "env_logger",
