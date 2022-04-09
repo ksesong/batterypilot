@@ -191,19 +191,19 @@ fn get_is_temperature_safe_for_charge(
         < temperature_high_limit
 }
 
-fn get_supports_bclm_key(smc_path: &Path) -> bool {
+fn get_supports_ch0c_key(smc_path: &Path) -> bool {
     let key_read_output = Command::new(&smc_path)
-        .args(["-k", "BCLM", "-r"])
+        .args(["-k", "CH0C", "-r"])
         .output()
         .expect("failed to execute process");
 
-    String::from_utf8(key_read_output.stdout).unwrap().trim() != "BCLM  [    ]  no data"
+    String::from_utf8(key_read_output.stdout).unwrap().trim() != "CH0C  [    ]  no data"
 }
 
-fn get_is_charging_enabled(smc_path: &Path, &supports_bclm_key: &bool) -> bool {
+fn get_is_charging_enabled(smc_path: &Path, &supports_ch0c_key: &bool) -> bool {
     let key_bytes_re = Regex::new(r"bytes (?P<bytes>\d{2})").unwrap();
 
-    if supports_bclm_key {
+    if !supports_ch0c_key {
         let key_read_output = Command::new(&smc_path)
             .args(["-k", "BCLM", "-r"])
             .output()
@@ -226,10 +226,10 @@ fn get_is_charging_enabled(smc_path: &Path, &supports_bclm_key: &bool) -> bool {
     }
 }
 
-fn enable_charging(smc_path: &Path, &supports_bclm_key: &bool, should_enable: bool) -> bool {
+fn enable_charging(smc_path: &Path, &supports_ch0c_key: &bool, should_enable: bool) -> bool {
     debug!("enable_charging: {}", should_enable);
 
-    if supports_bclm_key {
+    if !supports_ch0c_key {
         let bytes = if should_enable { "64" } else { "00" };
         Command::new("sudo")
             .arg(&smc_path)
@@ -275,11 +275,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let stage_of_charge_high_limit: f32 = 52.0;
     let temperature_high_limit: f32 = 32.0;
 
-    let supports_bclm_key: bool = get_supports_bclm_key(&smc_path);
-    let mut is_charging_enabled: bool = get_is_charging_enabled(&smc_path, &supports_bclm_key);
+    let supports_ch0c_key: bool = get_supports_ch0c_key(&smc_path);
+    let mut is_charging_enabled: bool = get_is_charging_enabled(&smc_path, &supports_ch0c_key);
     debug!(
-        "supports_bclm_key: {:?}; is_charging_enabled: {:?}",
-        supports_bclm_key, is_charging_enabled
+        "supports_ch0c_key: {:?}; is_charging_enabled: {:?}",
+        supports_ch0c_key, is_charging_enabled
     );
 
     if std::env::args().nth(1).unwrap_or_default() == "--read" {
@@ -303,16 +303,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
     loop {
         tokio::select! {
             _ = sigint.recv() => {
-                enable_charging(&smc_path, &supports_bclm_key, true);
+                enable_charging(&smc_path, &supports_ch0c_key, true);
                 break;
             },
             _ = sigterm.recv() => {
-                enable_charging(&smc_path, &supports_bclm_key, true);
+                enable_charging(&smc_path, &supports_ch0c_key, true);
                 break;
             },
             _ = sleep_nfd.read_exact(&mut sleep_buf) => {
                 if is_charging_enabled {
-                    is_charging_enabled = enable_charging(&smc_path, &supports_bclm_key, false);
+                    is_charging_enabled = enable_charging(&smc_path, &supports_ch0c_key, false);
                     was_charging_enabled_at_sleep = true;
                 }
             },
@@ -325,7 +325,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 if was_charging_enabled_at_sleep {
                     if is_temperature_safe_for_charge
                         && battery.state_of_charge().get::<percent>() < stage_of_charge_high_limit {
-                        is_charging_enabled = enable_charging(&smc_path, &supports_bclm_key, true);
+                        is_charging_enabled = enable_charging(&smc_path, &supports_ch0c_key, true);
                         debug!("continue charging, interrupted at sleep");
                     }
                     was_charging_enabled_at_sleep = false;
@@ -333,13 +333,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     && is_temperature_safe_for_charge
                     && battery.state_of_charge().get::<percent>() <= stage_of_charge_low_limit
                 {
-                    is_charging_enabled = enable_charging(&smc_path, &supports_bclm_key, true)
+                    is_charging_enabled = enable_charging(&smc_path, &supports_ch0c_key, true)
                 } else if is_charging_enabled
                     && battery.state_of_charge().get::<percent>() >= stage_of_charge_high_limit
                 {
-                    is_charging_enabled = enable_charging(&smc_path, &supports_bclm_key, false)
+                    is_charging_enabled = enable_charging(&smc_path, &supports_ch0c_key, false)
                 } else if !is_temperature_safe_for_charge {
-                    is_charging_enabled = enable_charging(&smc_path, &supports_bclm_key, is_temperature_safe_for_charge);
+                    is_charging_enabled = enable_charging(&smc_path, &supports_ch0c_key, is_temperature_safe_for_charge);
                 }
 
                 debug!(
