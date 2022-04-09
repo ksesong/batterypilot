@@ -198,10 +198,10 @@ fn get_is_charging_enabled(smc_path: &Path) -> bool {
         .expect("failed to execute process");
     let key_bytes_re = Regex::new(r"bytes (?P<bytes>\d{2})").unwrap();
 
-    &key_bytes_re
-        .captures(&String::from_utf8(key_read_output.stdout).unwrap())
-        .unwrap()["bytes"]
-        == "00"
+    match &key_bytes_re.captures(&String::from_utf8(key_read_output.stdout).unwrap()) {
+        None => true,
+        Some(val) => (&val["bytes"] == "00"),
+    }
 }
 
 fn enable_charging(smc_path: &Path, should_enable: bool) -> bool {
